@@ -123,6 +123,21 @@ body.lvl2{background:#fff3ea}
 .parent button{border:0;border-radius:14px;padding:12px 16px;font-family:inherit;font-size:17px;font-weight:700;cursor:pointer}
 .pg{background:var(--ok);color:#fff;box-shadow:0 4px 0 #00896d}.pb{background:#ffecec;color:#c0392b;box-shadow:0 4px 0 #f5c6c6}
 .pnote{font-size:13px;color:var(--muted);margin-top:8px;line-height:1.5}
+.pchip{border:0;background:#fff;border-radius:16px;padding:6px 12px;font-family:inherit;font-size:15px;font-weight:700;box-shadow:0 2px 0 #f0e2c8;cursor:pointer;white-space:nowrap;color:var(--ink);text-align:center}
+.pchip small{display:block;font-size:11px;font-weight:400;color:var(--muted)}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pcard-wrap{display:flex;flex-direction:column;gap:6px}
+.pcard{border:0;background:#fff;border-radius:20px;padding:16px 8px;font-family:inherit;color:var(--ink);cursor:pointer;box-shadow:0 5px 0 #f0e2c8;width:100%}
+.pcard:active{transform:translateY(3px);box-shadow:0 2px 0 #f0e2c8}
+.pcard .pav{font-size:54px;display:block;line-height:1.1}
+.pcard b{display:block;font-size:19px;margin-top:4px}
+.pcard small{display:block;color:var(--muted);font-size:13px;margin-top:3px}
+.pcard.add{background:#f3efff;border:3px dashed var(--pri2);box-shadow:none}
+.pman{display:flex;gap:6px}.pman button{flex:1;border:0;background:#fff;border-radius:10px;padding:6px;font-family:inherit;font-size:13px;cursor:pointer;box-shadow:0 2px 0 #f0e2c8}
+.avgrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;max-width:400px;margin:0 auto}
+.avb{border:3px solid transparent;background:#faf6ee;border-radius:12px;font-size:26px;padding:4px 0;cursor:pointer}
+.avb.on{border-color:var(--pri);background:#efeaff}
+
 .ans.ok{border-color:var(--ok);background:#e3fbf3}.ans.no{border-color:var(--bad);background:#ffecec}
 </style>
 </head>
@@ -257,13 +272,21 @@ function sim(a,b){ // rough look-alike score
 }
 function lookalikes(t,pool,n){return pool.filter(v=>v.w!==t.w).sort((x,y)=>sim(t.w,y.w)-sim(t.w,x.w)).slice(0,n)}
 
-let store={};
-try{store=JSON.parse(localStorage.getItem('eng3')||'{}')}catch(e){store={}}
-function save(){try{localStorage.setItem('eng3',JSON.stringify(store))}catch(e){}}
-let LEVEL = store._level===2?2:1;
+/* ---- profiles (each child keeps own progress on this device) ---- */
+const AVATARS=['🦊','🐼','🐯','🦁','🐸','🐵','🐰','🐻','🦄','🐙','🐶','🐱','🐧','🦋','🐢','🐬'];
+let PROF={list:[],cur:null};
+try{const p=JSON.parse(localStorage.getItem('eng3_profiles')||'null'); if(p&&Array.isArray(p.list)) PROF=p;}catch(e){}
+function saveProf(){try{localStorage.setItem('eng3_profiles',JSON.stringify(PROF))}catch(e){}}
+function curP(){return PROF.list.find(p=>p.id===PROF.cur)||null}
+function readStore(id){try{return JSON.parse(localStorage.getItem('eng3_p_'+id)||'{}')||{}}catch(e){return {}}}
+let store={}, LEVEL=1;
+function loadStore(){store=curP()?readStore(PROF.cur):{}; LEVEL=store._level===2?2:1;}
+function save(){if(!PROF.cur)return; try{localStorage.setItem('eng3_p_'+PROF.cur,JSON.stringify(store))}catch(e){}}
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+loadStore();
 function setLevel(l){LEVEL=l;store._level=l;save();home();}
 const skey = k => LEVEL===2 ? k+'_h' : k;
-function totalStars(){return Object.values(store).reduce((s,v)=>s+((v&&v.stars)||0),0)}
+function totalStars(st){return Object.values(st||store).reduce((s,v)=>s+((v&&v.stars)||0),0)}
 
 /* ---- speech ---- */
 let voice=null, ttsOK = 'speechSynthesis' in window;
@@ -629,6 +652,7 @@ function examQs(){
 /* ============ SCREENS ============ */
 function starRow(st){return '⭐'.repeat(st)+'☆'.repeat(3-st)}
 function home(){
+  if(!curP()) return profiles();
   try{rec&&rec.abort()}catch(e){}
   if(ttsOK){try{speechSynthesis.cancel()}catch(e){}}
   const L=LEVEL-1;
@@ -642,14 +666,14 @@ function home(){
   document.body.classList.toggle('lvl2',LEVEL===2);
   $('#app').innerHTML = `
   <header><div class="brand"><div class="owl">🦉</div><div><h1>המורה לאנגלית שלי</h1><div class="sub">הכנה למבחן כיתה ג' · 22.11</div></div></div>
-  <div class="stars">⭐ ${totalStars()}</div></header>
+  <button class="pchip" onclick="profiles()" aria-label="החלפת ילד">${curP().av} ${esc(curP().name)} · ⭐ ${totalStars()}<small>החלפה</small></button></header>
   <div class="warn" id="ttswarn">🔇 הדפדפן הזה לא מקריא בקול. בתרגילי ההאזנה המילה תופיע כתובה – שאחד ההורים יקריא אותה.</div>
   <div class="levels">
     <button class="lv ${LEVEL===1?'on':''}" onclick="setLevel(1)">🌱 רמה 1<small>רגיל</small></button>
     <button class="lv ${LEVEL===2?'on':''}" onclick="setLevel(2)">🔥 רמה 2<small>אתגר</small></button>
   </div>
   <div class="bubble">${LEVEL===1
-    ?`היי! אני ינשופית 🦉 ואני אעזור לך להצליח במבחן באנגלית. ${daysLeft>0?`נשארו עוד <b>${daysLeft}</b> ימים למבחן.`:''} בכל משחק אפשר לאסוף עד 3 כוכבים.
+    ?`היי ${esc(curP().name)}! אני ינשופית 🦉 ואני אעזור לך להצליח במבחן באנגלית. ${daysLeft>0?`נשארו עוד <b>${daysLeft}</b> ימים למבחן.`:''} בכל משחק אפשר לאסוף עד 3 כוכבים.
       ${l1done>=4?'<br>🔥 את כבר ממש טובה – אולי תנסי את <b>רמה 2</b>?':''}`
     :`🔥 <b>רמה 2 – אתגר!</b> כאן יש יותר תשובות לבחור מהן, מילים ואותיות שדומות זו לזו, חשבון באנגלית, משפטים שלמים, וכתיבת הפירוש בעברית – בדיוק כמו במבחן.
       <br>במבחן הניסיון של רמה 2 יש <b>רק ניסיון אחד</b> לכל שאלה. בהצלחה! 💪`}</div>
@@ -785,7 +809,102 @@ function finish(){
   scrollTo(0,0);
 }
 
-home();
+/* ============ PROFILE SCREENS ============ */
+let manage=false;
+function profiles(){
+  try{rec&&rec.abort()}catch(e){}
+  document.body.classList.remove('lvl2');
+  const cards=PROF.list.map(p=>{
+    const st=readStore(p.id);
+    return `<div class="pcard-wrap">
+      <button class="pcard" onclick="choose('${p.id}')"><span class="pav">${p.av}</span><b>${esc(p.name)}</b><small>⭐ ${totalStars(st)} · ${st._level===2?'🔥 רמה 2':'🌱 רמה 1'}</small></button>
+      ${manage?`<div class="pman"><button onclick="editProfile('${p.id}')">✏️ עריכה</button><button onclick="askDel('${p.id}')">🗑️ מחיקה</button></div>`:''}
+    </div>`}).join('');
+  $('#app').innerHTML=`
+  <header><div class="brand"><div class="owl">🦉</div><div><h1>המורה לאנגלית שלי</h1><div class="sub">הכנה למבחן כיתה ג' · 22.11</div></div></div></header>
+  <div class="bubble">${PROF.list.length?'מי מתאמן היום? 👋 לחצו על השם שלכם.':'ברוכים הבאים! 👋 קודם כל – בואו ניצור פרופיל לכל ילד. ככה לכל אחד יהיו הכוכבים וההתקדמות שלו.'}</div>
+  <div class="pgrid">${cards}
+    <button class="pcard add" onclick="editProfile()"><span class="pav">➕</span><b>ילד/ה חדש/ה</b></button>
+  </div>
+  <div id="delbox"></div>
+  ${PROF.list.length?`<div style="text-align:center;margin-top:14px"><button class="lnk" onclick="manage=!manage;profiles()">${manage?'✔️ סיום עריכה':'⚙️ עריכה ומחיקה של ילדים'}</button></div>`:''}
+  <div class="note">ההתקדמות של כל ילד נשמרת רק במכשיר הזה ולא נשלחת לשום מקום.</div>`;
+  scrollTo(0,0);
+}
+function choose(id){PROF.cur=id; saveProf(); loadStore(); manage=false; home();}
+let draft=null;
+function editProfile(id){
+  const p=id?PROF.list.find(x=>x.id===id):null;
+  draft={id:id||null, name:p?p.name:'', av:p?p.av:AVATARS[PROF.list.length%AVATARS.length], g:p?p.g:'f'};
+  renderEdit();
+}
+function renderEdit(){
+  $('#app').innerHTML=`
+  <div class="topbar"><button class="back" onclick="profiles()">→ חזרה</button><b style="flex:1">${draft.id?'✏️ עריכת פרופיל':'➕ ילד/ה חדש/ה'}</b></div>
+  <div class="qcard">
+    <div class="spic" id="bigav">${draft.av}</div>
+    <div class="qtitle">איך קוראים לך?</div>
+    <input id="pname" class="ans" dir="rtl" maxlength="14" autocomplete="off" placeholder="השם שלי…" value="${esc(draft.name)}">
+    <div class="qtitle">בן או בת? <small>(כדי שהאפליקציה תפנה בלשון הנכונה)</small></div>
+    <div class="levels" style="max-width:320px;margin:0 auto 14px">
+      <button class="lv ${draft.g==='f'?'on':''}" onclick="draft.name=$('#pname').value;draft.g='f';renderEdit()">👧 בת</button>
+      <button class="lv ${draft.g==='m'?'on':''}" onclick="draft.name=$('#pname').value;draft.g='m';renderEdit()">👦 בן</button>
+    </div>
+    <div class="qtitle">בחרו דמות:</div>
+    <div class="avgrid">${AVATARS.map(a=>`<button class="avb ${a===draft.av?'on':''}" onclick="draft.name=$('#pname').value;draft.av='${a}';renderEdit()">${a}</button>`).join('')}</div>
+    <div class="feedback" id="perr"></div>
+    <button class="next" onclick="saveProfile()">שמירה ✔️</button>
+  </div>`;
+}
+function saveProfile(){
+  const name=($('#pname').value||'').trim();
+  if(!name){$('#perr').textContent='צריך לכתוב שם 🙂';return}
+  if(draft.id){
+    Object.assign(PROF.list.find(x=>x.id===draft.id),{name,av:draft.av,g:draft.g});
+  } else {
+    const id='p'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    if(PROF.list.length===0){ // keep progress from the earlier single-user version
+      try{const old=localStorage.getItem('eng3'); if(old) localStorage.setItem('eng3_p_'+id,old);}catch(e){}
+    }
+    PROF.list.push({id,name,av:draft.av,g:draft.g});
+    PROF.cur=id;
+  }
+  saveProf();
+  if(!draft.id){loadStore(); home();} else {if(draft.id===PROF.cur) loadStore(); profiles();}
+}
+function askDel(id){
+  const p=PROF.list.find(x=>x.id===id);
+  $('#delbox').innerHTML=`<div class="bubble" style="text-align:center">למחוק את <b>${p.av} ${esc(p.name)}</b>? כל הכוכבים וההתקדמות שלו/ה יימחקו ואי אפשר לשחזר.
+    <div class="btnrow" style="margin-top:10px"><button class="btn2" style="background:#ffecec;color:#c0392b" onclick="doDel('${id}')">כן, למחוק</button><button class="btn2" onclick="$('#delbox').innerHTML=''">ביטול</button></div></div>`;
+  $('#delbox').scrollIntoView({behavior:'smooth'});
+}
+function doDel(id){
+  PROF.list=PROF.list.filter(x=>x.id!==id);
+  try{localStorage.removeItem('eng3_p_'+id)}catch(e){}
+  if(PROF.cur===id){PROF.cur=null; loadStore();}
+  saveProf(); profiles();
+}
+
+/* ---- speak to boys in masculine Hebrew (texts are written in feminine) ---- */
+const H='\u0590-\u05FF';
+const MASC=[
+  ['את אלופה','אתה אלוף'],['וואו, אלופה','וואו, אלוף'],['איזו חכמה','איזה חכם'],['את מוכנה','אתה מוכן'],['ואת שם','ואתה שם'],
+  ['את כבר ממש טובה','אתה כבר ממש טוב'],['לא בטוחה','לא בטוח'],['חושבת','חושב'],['אמרה נכון','אמר נכון'],
+  ['אני אוהבת','אני אוהב'],['אני גדולה','אני גדול'],['אולי תנסי','אולי תנסה'],
+  ['הקשיבי','הקשב'],['ובחרי','ובחר'],['בחרי','בחר'],['קראי','קרא'],['אמרי','אמור'],['לחצי','לחץ'],['נסי','נסה'],
+  ['כתבי','כתוב'],['ודברי','ודבר'],['דברי','דבר'],['ותגידי','ותגיד'],['תגידי','תגיד'],['בואי','בוא'],['שימי','שים'],
+  ['תשאלי','תשאל'],['תנסי','תנסה'],['ענית','ענית']
+].map(([f,m])=>[new RegExp('(^|[^'+H+'])'+f+'(?=$|[^'+H+'])','g'),'$1'+m]);
+function masc(s){for(const [r,m] of MASC) s=s.replace(r,m); return s}
+function genderize(root){
+  const p=curP(); if(!p||p.g!=='m') return;
+  const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT); let n;
+  while((n=w.nextNode())){const t=masc(n.nodeValue); if(t!==n.nodeValue) n.nodeValue=t;}
+  root.querySelectorAll('[placeholder]').forEach(e=>{const t=masc(e.placeholder); if(t!==e.placeholder) e.placeholder=t});
+}
+try{ new MutationObserver(()=>genderize($('#app'))).observe($('#app'),{childList:true,subtree:true,characterData:true}); }catch(e){}
+
+if(curP()) home(); else profiles();
 </script>
 </body>
 </html>
