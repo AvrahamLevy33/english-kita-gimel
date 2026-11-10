@@ -500,17 +500,52 @@ function wEq(a,b){return a===b || (HOMO[a]||[]).includes(b) || (HOMO[b]||[]).inc
 function lev(a,b){const d=[...Array(b.length+1).keys()];for(let i=1;i<=a.length;i++){let p=d[0];d[0]=i;
   for(let j=1;j<=b.length;j++){const t=d[j];d[j]=Math.min(d[j]+1,d[j-1]+1,p+(a[i-1]===b[j-1]?0:1));p=t}}return d[b.length]}
 // returns {ok, near, best}
+// consonant "skeleton" so that kid/accented pronunciations still match (tree≈three, elefent≈elephant)
+function phon(w){
+  w=(w||'').toLowerCase().replace(/[^a-z]/g,''); if(!w) return '';
+  const f=w[0];
+  w=w.replace(/^kn/,'n').replace(/^wr/,'r').replace(/ph/g,'f').replace(/th/g,'t').replace(/ck/g,'k').replace(/ch/g,'c')
+     .replace(/c(?=[eiy])/g,'s').replace(/[cq]/g,'k').replace(/x/g,'ks').replace(/z/g,'s').replace(/v/g,'b').replace(/gh/g,'')
+     .replace(/(.)\1+/g,'$1');
+  const rest=w.slice(1).replace(/[aeiouyhw]/g,'');
+  return ('aeiou'.includes(f)?'a':w[0])+rest;
+}
+// split recognizer output into words, also gluing neighbours ("pencil" + "case", "grand" + "ma")
+function words(alt){
+  const A=normEn(alt).split(' ').filter(Boolean); const out=[...A];
+  for(let i=0;i<A.length-1;i++) out.push(A[i]+A[i+1]);
+  return out;
+}
+function wordMatch(t,a){
+  if(wEq(t,a)) return 2;                                   // exact / homophone
+  if(NUMW.includes(t)) return (t==='three'&&a==='tree')?1:0; // numbers must be the right number
+  const lenient = LEVEL===1;
+  if(t.length<=3 && t[0]!==a[0]) return 0;                 // short words: in ≠ on, egg ≠ add
+  const d=lev(t,a), L=Math.max(t.length,a.length);
+  if(L>=4 && d<=1) return 1;                               // one letter off
+  if(lenient && L>=6 && d<=2) return 1;
+  const pt=phon(t), pa=phon(a);
+  if(pt && pt===pa && (lenient || t.length>=4)) return 1;  // sounds the same
+  if(lenient && pt.length>=3 && lev(pt,pa)<=1 && Math.abs(t.length-a.length)<=2) return 1;
+  return 0;
+}
+// returns {ok, near, best}
 function judge(target, alts){
   const T=normEn(target).split(' ');
   const single = T.length<=2;
-  const need = single?1:(LEVEL===2?0.9:0.75);
+  const need = single?1:(LEVEL===2?0.85:0.7);
   let best='', bestR=-1, near=false;
   for(const alt of alts){
-    const A=normEn(alt).split(' ').filter(Boolean);
+    const A=words(alt);
     let hit=0;
     for(const t of T){
-      if(A.some(a=>wEq(t,a) || (LEVEL===1 && t.length>=5 && lev(t,a)<=1))) hit++;
+      // short function words (a, an, the, I) are often dropped by the recognizer – don't punish that in sentences
+      if(!single && ['a','an','the','i'].includes(t)){hit++;continue}
+      let m=0; for(const a of A){m=Math.max(m,wordMatch(t,a)); if(m===2)break}
+      if(m) hit++; else if(NUMW.includes(t)) hit-=T.length; // a wrong number = wrong sentence
     }
+    // single word: the whole utterance glued together may match ("grand pa" → grandpa)
+    if(single && hit<T.length){const g=normEn(alt).replace(/ /g,''); if(wordMatch(T.join(''),g)) hit=T.length;}
     const r=hit/T.length;
     if(r>bestR){bestR=r;best=alt}
     if(single && T.length===1 && (NEAR[T[0]]||[]).some(n=>A.includes(n))) near=true;
@@ -572,31 +607,48 @@ let rec=null;
 function listen(q){
   if(q.done) return;
   if(srBroken){ say(q.target,0.75); return; } // in parent mode the mic button replays the model
+  if(rec){ try{rec.abort()}catch(e){} rec=null; return; } // tap again = stop
   try{ if(ttsOK) speechSynthesis.cancel(); }catch(e){}
+  let r;
   try{
-    rec = new SR(); rec.lang='en-US'; rec.interimResults=false; rec.maxAlternatives=5; rec.continuous=false;
+    r = new SR(); r.lang='en-US'; r.interimResults=true; r.maxAlternatives=10; r.continuous=true;
   }catch(e){ toParentMode(); return; }
-  let got=false;
-  rec.onstart=()=>{$('#mic').classList.add('rec'); $('#micst').textContent='מקשיבה… 👂 דברי עכשיו';};
-  rec.onresult=e=>{
-    got=true; const alts=[];
-    for(const res of e.results) for(let i=0;i<res.length;i++) alts.push(res[i].transcript);
-    const j=judge(q.target,alts);
-    speakResult(q,j.ok,alts[0]||'',j.near);
+  rec=r;
+  const heard=[]; let decided=false, timer=null, finalTimer=null;
+  const decide=()=>{
+    if(decided) return; decided=true;
+    clearTimeout(timer); clearTimeout(finalTimer);
+    try{r.stop()}catch(e){}
+    if(!heard.length){ $('#micst') && ($('#micst').textContent='לא שמעתי כלום 🙉 לחצי שוב, קרוב לטלפון, ודברי חזק וברור'); return; }
+    const j=judge(q.target,heard);
+    speakResult(q,j.ok,j.ok?j.best:(heard[0]||''),j.near);
   };
-  rec.onerror=e=>{
+  r.onstart=()=>{$('#mic').classList.add('rec'); $('#micst').textContent='מקשיבה… 👂 דברי עכשיו (אפשר ללחוץ שוב כדי לעצור)';
+    timer=setTimeout(decide, q.sentence?8000:6000);};
+  r.onresult=e=>{
+    let isFinal=false;
+    for(let k=e.resultIndex;k<e.results.length;k++){
+      const res=e.results[k];
+      for(let i=0;i<res.length;i++){const t=res[i].transcript.trim(); if(t && !heard.includes(t)) heard.push(t);}
+      if(res.isFinal) isFinal=true;
+    }
+    // stop as soon as we already hear the right answer
+    if(judge(q.target,heard).ok) return decide();
+    // after a final result, wait a moment in case more words are coming (sentences)
+    if(isFinal){ clearTimeout(finalTimer); finalTimer=setTimeout(decide, q.sentence?1500:700); }
+  };
+  r.onerror=e=>{
     if(['not-allowed','service-not-allowed','audio-capture','network'].includes(e.error)){
+      decided=true; clearTimeout(timer);
       toParentMode(e.error==='network'
         ?'📶 אין חיבור לאינטרנט – בדיקת הדיבור צריכה אינטרנט. בינתיים: אמרי בקול, ואמא או אבא יגידו אם זה נכון.'
         :(/github\.io$/.test(location.hostname)
-          ?'🔇 הדפדפן חוסם את המיקרופון. לחצו על סמל המנעול ליד הכתובת ← מיקרופון ← לאפשר, ונסו שוב. (באייפון: עדיף Safari או Chrome מעודכנים.) בינתיים: אמרי בקול, ואמא או אבא יגידו אם זה נכון.'
+          ?'🔇 הדפדפן חוסם את המיקרופון. לחצו על סמל המנעול ליד הכתובת ← מיקרופון ← לאפשר, ונסו שוב. בינתיים: אמרי בקול, ואמא או אבא יגידו אם זה נכון.'
           :'🔇 כאן המיקרופון חסום. כדי שהאפליקציה תבדוק לבד – פתחו את האתר <b>avrahamlevy33.github.io/english-kita-gimel</b> ואשרו גישה למיקרופון. בינתיים: אמרי בקול, ואמא או אבא יגידו אם זה נכון.'));
-    } else if(e.error==='no-speech'){
-      $('#micst').textContent='לא שמעתי כלום 🙉 לחצי שוב ודברי חזק יותר';
     }
   };
-  rec.onend=()=>{const m=$('#mic'); if(m) m.classList.remove('rec'); if(!got && !srBroken && $('#micst') && /מקשיבה/.test($('#micst').textContent)) $('#micst').textContent='לחצי על המיקרופון ותגידי';};
-  try{ rec.start(); }catch(e){ toParentMode(); }
+  r.onend=()=>{ if(rec===r) rec=null; const m=$('#mic'); if(m) m.classList.remove('rec'); if(!decided && !srBroken) decide(); };
+  try{ r.start(); }catch(e){ rec=null; toParentMode(); }
 }
 function speakResult(q,ok,heard,near){
   if(q.done || !S || S.qs[S.i]!==q || !$('#mic')) return;
@@ -625,7 +677,9 @@ function speakResult(q,ok,heard,near){
   $('#fb').innerHTML = `${msg}
     ${heard?`<span class="hint">שמעתי: <span class="heard">${heard}</span></span>`:''}
     <span class="hint">בואי נקשיב ונגיד שוב 👂 (ניסיון ${q.tries} מתוך ${limit})</span>
-    ${tip?`<span class="hint">💡 ${tip}</span>`:''}`;
+    ${tip?`<span class="hint">💡 ${tip}</span>`:''}
+    ${q.tries>=2?`<button class="lnk" id="selfok" style="margin-top:8px">👍 אני בטוחה שאמרתי נכון – הבא</button>`:''}`;
+  if($('#selfok')) $('#selfok').onclick=()=>{q.helped=true; speakResult(q,true,'');};
   setTimeout(()=>say(q.target,0.75),400);
 }
 
