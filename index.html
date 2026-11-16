@@ -94,6 +94,9 @@ h1{font-size:20px;margin:0;font-weight:800}
 .lv.on{border-color:var(--pri);background:#efeaff}
 body.lvl2 .lv.on{border-color:#e17055;background:#fff0ea}
 body.lvl2{background:#fff3ea}
+body.lvl3{background:#eef4ff}
+body.lvl3 .lv.on{border-color:#0984e3;background:#e3f0ff}
+.lv{padding:10px 4px}
 .c8{background:#dff3e4}
 .opts.three{grid-template-columns:1fr 1fr 1fr}
 .opts.three .opt{min-height:84px}
@@ -280,12 +283,12 @@ function saveProf(){try{localStorage.setItem('eng3_profiles',JSON.stringify(PROF
 function curP(){return PROF.list.find(p=>p.id===PROF.cur)||null}
 function readStore(id){try{return JSON.parse(localStorage.getItem('eng3_p_'+id)||'{}')||{}}catch(e){return {}}}
 let store={}, LEVEL=1;
-function loadStore(){store=curP()?readStore(PROF.cur):{}; LEVEL=store._level===2?2:1;}
+function loadStore(){store=curP()?readStore(PROF.cur):{}; LEVEL=[1,2,3].includes(store._level)?store._level:1;}
 function save(){if(!PROF.cur)return; try{localStorage.setItem('eng3_p_'+PROF.cur,JSON.stringify(store))}catch(e){}}
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 loadStore();
 function setLevel(l){LEVEL=l;store._level=l;save();home();}
-const skey = k => LEVEL===2 ? k+'_h' : k;
+const skey = k => LEVEL===2 ? k+'_h' : LEVEL===3 ? k+'_x' : k;
 function totalStars(st){return Object.values(st||store).reduce((s,v)=>s+((v&&v.stars)||0),0)}
 
 /* ---- speech ---- */
@@ -302,7 +305,7 @@ function say(text, rate){
   try{
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang='en-US'; u.rate=rate||(LEVEL===2?0.95:0.8); if(voice) u.voice=voice;
+    u.lang='en-US'; u.rate=rate||(LEVEL>=2?0.95:0.8); if(voice) u.voice=voice;
     speechSynthesis.speak(u); return true;
   }catch(e){return false}
 }
@@ -493,7 +496,7 @@ const NUMW = ['zero','one','two','three','four','five','six','seven','eight','ni
 const HOMO = {two:['to','too','tu'],four:['for','fore'],eight:['ate'],one:['won'],grey:['gray'],gray:['grey'],
   i:['eye','hi','ay'],an:['and','a'],a:['an','the','uh'],in:['inn'],pupil:['people','pupils'],bed:['bead'],dad:['that','dead'],egg:['eggs'],eggs:['egg']};
 function normEn(s){
-  return (s||'').toLowerCase().replace(/[.,!?'"]/g,' ').replace(/\b(\d+)\b/g,(m,d)=>NUMW[+d]||m)
+  return (s||'').toLowerCase().replace(/[.,!?'"]/g,' ').replace(/\b(\d+)\b/g,(m,d)=>(+d<=100?num2w(+d).replace(/-/g,' '):m)).replace(/-/g,' ')
     .replace(/\bgrey\b/g,'gray').replace(/\s+/g,' ').trim();
 }
 function wEq(a,b){return a===b || (HOMO[a]||[]).includes(b) || (HOMO[b]||[]).includes(a)}
@@ -518,7 +521,7 @@ function words(alt){
 }
 function wordMatch(t,a){
   if(wEq(t,a)) return 2;                                   // exact / homophone
-  if(NUMW.includes(t)) return (t==='three'&&a==='tree')?1:0; // numbers must be the right number
+  if(NUMWORDS.has(t)) return (t==='three'&&a==='tree')||(t==='thirteen'&&a==='thirteen')?1:0; // numbers must be the right number
   const lenient = LEVEL===1;
   if(t.length<=3 && t[0]!==a[0]) return 0;                 // short words: in ≠ on, egg ≠ add
   const d=lev(t,a), L=Math.max(t.length,a.length);
@@ -533,7 +536,7 @@ function wordMatch(t,a){
 function judge(target, alts){
   const T=normEn(target).split(' ');
   const single = T.length<=2;
-  const need = single?1:(LEVEL===2?0.85:0.7);
+  const need = single?1:(LEVEL>=2?0.85:0.7);
   let best='', bestR=-1, near=false;
   for(const alt of alts){
     const A=words(alt);
@@ -542,7 +545,7 @@ function judge(target, alts){
       // short function words (a, an, the, I) are often dropped by the recognizer – don't punish that in sentences
       if(!single && ['a','an','the','i'].includes(t)){hit++;continue}
       let m=0; for(const a of A){m=Math.max(m,wordMatch(t,a)); if(m===2)break}
-      if(m) hit++; else if(NUMW.includes(t)) hit-=T.length; // a wrong number = wrong sentence
+      if(m) hit++; else if(NUMWORDS.has(t)) hit-=T.length; // a wrong number = wrong sentence
     }
     // single word: the whole utterance glued together may match ("grand pa" → grandpa)
     if(single && hit<T.length){const g=normEn(alt).replace(/ /g,''); if(wordMatch(T.join(''),g)) hit=T.length;}
@@ -653,7 +656,7 @@ function listen(q){
 function speakResult(q,ok,heard,near){
   if(q.done || !S || S.qs[S.i]!==q || !$('#mic')) return;
   q.tries++;
-  const tip = TIPS[q.target] || (q.target.includes('have')?TIPS.have:'');
+  const tip = TIPS[q.target] || q.tip || (q.target.includes('have')?TIPS.have:'');
   if(ok){
     q.done=true;
     const first = q.tries===1 && !q.helped;
@@ -683,19 +686,217 @@ function speakResult(q,ok,heard,near){
   setTimeout(()=>say(q.target,0.75),400);
 }
 
+/* ============ LEVEL 3 – EXPERT: new words + numbers to 100 ============ */
+SVG.pink='<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="24" fill="#ff8fc8"/></svg>';
+SVG.small='<svg viewBox="0 0 64 64"><circle cx="20" cy="44" r="8" fill="#6c5ce7"/><circle cx="46" cy="30" r="18" fill="#dfe6e9"/><text x="20" y="62" font-size="9" text-anchor="middle" fill="#6c5ce7" font-weight="700">small</text></svg>';
+const VOCAB3 = [
+  // colors
+  {w:'red',h:'אדום',p:'🔴',a:['אדום','אדומה']},{w:'blue',h:'כחול',p:'🔵',a:['כחול','כחולה']},{w:'green',h:'ירוק',p:'🟢',a:['ירוק','ירוקה']},
+  {w:'yellow',h:'צהוב',p:'🟡',a:['צהוב','צהובה']},{w:'black',h:'שחור',p:'⚫',a:['שחור','שחורה']},{w:'white',h:'לבן',p:'⚪',a:['לבן','לבנה']},
+  {w:'orange',h:'כתום',p:'🟠',a:['כתום','כתומה','תפוז']},{w:'purple',h:'סגול',p:'🟣',a:['סגול','סגולה']},{w:'brown',h:'חום',p:'🟤',a:['חום','חומה']},
+  {w:'pink',h:'ורוד',s:'pink',a:['ורוד','ורודה']},
+  // animals
+  {w:'cat',h:'חתול',p:'🐱',a:['חתול','חתולה']},{w:'dog',h:'כלב',p:'🐶',a:['כלב','כלבה']},{w:'fish',h:'דג',p:'🐟',a:['דג','דגים']},
+  {w:'bird',h:'ציפור',p:'🐦',a:['ציפור']},{w:'cow',h:'פרה',p:'🐄',a:['פרה']},{w:'horse',h:'סוס',p:'🐴',a:['סוס','סוסה']},
+  {w:'lion',h:'אריה',p:'🦁',a:['אריה']},{w:'frog',h:'צפרדע',p:'🐸',a:['צפרדע']},{w:'monkey',h:'קוף',p:'🐵',a:['קוף','קופה']},
+  {w:'rabbit',h:'ארנב',p:'🐰',a:['ארנב','ארנבת','שפן']},{w:'bear',h:'דוב',p:'🐻',a:['דוב','דובה','דובי']},{w:'snake',h:'נחש',p:'🐍',a:['נחש']},
+  // family & body
+  {w:'mom',h:'אמא',p:'👩',a:['אמא','אימא']},{w:'brother',h:'אח',p:'👦',a:['אח']},{w:'sister',h:'אחות',p:'👧',a:['אחות']},
+  {w:'baby',h:'תינוק',p:'👶',a:['תינוק','תינוקת']},{w:'eye',h:'עין',p:'👁️',a:['עין','עיין']},{w:'ear',h:'אוזן',p:'👂',a:['אוזן','אוזנים']},
+  {w:'hand',h:'יד',p:'✋',a:['יד']},{w:'leg',h:'רגל',p:'🦵',a:['רגל']},{w:'tooth',h:'שן',p:'🦷',a:['שן','שיניים']},
+  // food
+  {w:'apple',h:'תפוח',p:'🍎',a:['תפוח']},{w:'banana',h:'בננה',p:'🍌',a:['בננה']},{w:'milk',h:'חלב',p:'🥛',a:['חלב']},
+  {w:'bread',h:'לחם',p:'🍞',a:['לחם']},{w:'cake',h:'עוגה',p:'🎂',a:['עוגה','עוגת יום הולדת']},{w:'pizza',h:'פיצה',p:'🍕',a:['פיצה']},
+  {w:'ice cream',h:'גלידה',p:'🍦',a:['גלידה']},{w:'cheese',h:'גבינה',p:'🧀',a:['גבינה']},{w:'carrot',h:'גזר',p:'🥕',a:['גזר']},
+  {w:'water',h:'מים',p:'💧',a:['מים']},
+  // things
+  {w:'book',h:'ספר',p:'📕',a:['ספר']},{w:'bag',h:'תיק',p:'🎒',a:['תיק','ילקוט']},{w:'ruler',h:'סרגל',p:'📏',a:['סרגל']},
+  {w:'scissors',h:'מספריים',p:'✂️',a:['מספריים']},{w:'clock',h:'שעון',p:'🕒',a:['שעון']},{w:'car',h:'מכונית',p:'🚗',a:['מכונית','אוטו','רכב']},
+  {w:'ball',h:'כדור',p:'⚽',a:['כדור']},{w:'tree',h:'עץ',p:'🌳',a:['עץ']},{w:'sun',h:'שמש',p:'☀️',a:['שמש']},
+  {w:'moon',h:'ירח',p:'🌙',a:['ירח']},{w:'star',h:'כוכב',p:'⭐',a:['כוכב']},{w:'flower',h:'פרח',p:'🌸',a:['פרח']},
+  {w:'phone',h:'טלפון',p:'📱',a:['טלפון','פלאפון']},{w:'box',h:'קופסה',p:'📦',a:['קופסה','קופסא','ארגז']},{w:'key',h:'מפתח',p:'🔑',a:['מפתח']},
+  {w:'bike',h:'אופניים',p:'🚲',a:['אופניים']},{w:'boat',h:'סירה',p:'⛵',a:['סירה','סירת מפרש']},{w:'umbrella',h:'מטרייה',p:'☂️',a:['מטרייה','מטריה']},
+  // actions & feelings
+  {w:'run',h:'לרוץ',p:'🏃',a:['לרוץ','רץ','רצה','ריצה']},{w:'swim',h:'לשחות',p:'🏊',a:['לשחות','שוחה','שחייה']},
+  {w:'read',h:'לקרוא',p:'📖',a:['לקרוא','קורא','קוראת','קריאה']},{w:'sleep',h:'לישון',p:'😴',a:['לישון','ישן','ישנה','שינה']},
+  {w:'eat',h:'לאכול',p:'🍽️',a:['לאכול','אוכל','אוכלת']},{w:'happy',h:'שמח',p:'😀',a:['שמח','שמחה']},{w:'sad',h:'עצוב',p:'😢',a:['עצוב','עצובה']},
+  {w:'small',h:'קטן',s:'small',a:['קטן','קטנה']},{w:'hot',h:'חם',p:'🥵',a:['חם','חמה']},{w:'cold',h:'קר',p:'🥶',a:['קר','קרה']}
+];
+const ALLV = VOCAB.concat(VOCAB3);
+const LET26 = 'abcdefghijklmnopqrstuvwxyz'.split('');
+const ONES = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+const TENS = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+function num2w(n){ if(n<20) return ONES[n]; if(n===100) return 'one hundred'; const t=Math.floor(n/10), u=n%10; return TENS[t]+(u?'-'+ONES[u]:''); }
+const NUMWORDS = new Set(ONES.concat(TENS.filter(Boolean),['hundred']));
+Object.assign(TR,{thirteen:"ת'רְטִין",fourteen:'פוֹרְטִין',fifteen:'פִיפְטִין',sixteen:'סִיקְסְטִין',seventeen:'סֶבֶנְטִין',eighteen:'אֵייטִין',nineteen:'נַיינְטִין',
+  twenty:'טְוֶנְטִי',thirty:"ת'רְטִי",forty:'פוֹרְטִי',fifty:'פִיפְטִי',sixty:'סִיקְסְטִי',seventy:'סֶבֶנְטִי',eighty:'אֵייטִי',ninety:'נַיינְטִי','one hundred':'וַאן הַנְדְרֶד'});
+const TEENTIP='💡 ב-13 עד 19 ההדגשה בסוף: thir-TEEN (ת\'רְ-טִין). בעשרות ההדגשה בהתחלה: THIR-ty (ת\'רְ-טִי).';
+function trNum(n){ const w=num2w(n); if(TR[w]) return TR[w]; const [a,b]=w.split('-'); return (TR[a]||a)+(b?'-'+(TR[b]||b):''); }
+function numPic(n){return `<b style="font-size:80px;direction:ltr;display:inline-block">${n}</b>`}
+
+function uniqPics(arr){const seen=new Set(); return arr.filter(v=>{const k=picHTML(v); if(seen.has(k)) return false; seen.add(k); return true});}
+// 6 pictures: 3 sound-alikes + 2 random
+function qListen3(){
+  const t = Math.random()<0.75 ? pick(VOCAB3,1)[0] : pick(VOCAB,1)[0];
+  const pool = ALLV.filter(v=>v.w!==t.w && picHTML(v)!==picHTML(t));
+  const near = lookalikes(t,pool,3);
+  const others = uniqPics([...near,...pick(pool.filter(v=>!near.includes(v)),6)]).slice(0,5);
+  return {type:'listen', title:'🎧 הקשיבי היטב! איזו תמונה מתאימה למילה?', audio:t.w, grid:'three',
+    opts:shuffle([t,...others]).map(v=>({html:`<span class="pic">${picHTML(v)}</span>`, ok:v.w===t.w})),
+    answer:`${t.w} = ${t.h}`, word:t.w};
+}
+// first letter from the WHOLE alphabet
+function qFirst3(){
+  const pool = ALLV.filter(v=>!['eye','phone','cheese','chair','one','ice cream'].includes(v.w));
+  const t = pick(pool,1)[0], l=t.w[0];
+  const bad = {c:['k','s'],k:['c'],s:['c'],g:['j'],j:['g']}[l]||[];
+  const tricky = {b:'d',d:'b',p:'b',m:'n',n:'m',f:'v',v:'f',t:'d',r:'l',l:'r',e:'i',i:'e',a:'e',o:'u',u:'o',h:'a',w:'v',s:'z',z:'s',c:'g',g:'c',k:'g',y:'j',j:'y'}[l];
+  let others = pick(LET26.filter(x=>x!==l && x!==tricky && !bad.includes(x)),4);
+  if(tricky && !bad.includes(tricky)) others.push(tricky); else others.push(pick(LET26.filter(x=>x!==l&&!bad.includes(x)&&!others.includes(x)),1)[0]);
+  return {type:'listen', title:'🔤 באיזו אות מתחילה המילה? (כל האלפבית!)', audio:t.w, cls:'letter', grid:'three',
+    opts:shuffle([l,...others]).map(x=>({html:x, ok:x===l})), answer:`${t.w} מתחילה באות ${l}`, word:t.w};
+}
+// numbers up to 100 with traps: 13↔30, 25↔52, ±1, ±10 — or arithmetic
+function numTraps(n){
+  const c=new Set();
+  if(n>=13&&n<=19) c.add((n-10)*10); if(n%10===0&&n>=30&&n<=90) c.add(n/10+10);
+  if(n>=10&&n%10!==0&&n<100){const r=(n%10)*10+Math.floor(n/10); if(r!==n&&r<=100) c.add(r);}
+  [n+1,n-1,n+10,n-10,n+2].forEach(x=>c.add(x));
+  return [...c].filter(x=>x>=0&&x<=100&&x!==n);
+}
+function sixNums(n){
+  let o=numTraps(n).slice(0,5);
+  while(o.length<5){const x=rnd(101); if(x!==n&&!o.includes(x)) o.push(x)}
+  return shuffle([n,...o]);
+}
+function qNumber3(){
+  const r=Math.random();
+  if(r<0.3){
+    let a,b; if(Math.random()<.5){a=10*(1+rnd(9)); b=1+rnd(9);} else {a=1+rnd(40); b=1+rnd(40);}
+    if(a+b>100) b=100-a; const n=a+b, txt=`${num2w(a)} plus ${num2w(b)}`.replace(/-/g,' ');
+    return {type:'listen', title:'➕ חשבון באנגלית! הקשיבי לתרגיל ובחרי את התוצאה', audio:txt, cls:'letter', grid:'three',
+      opts:sixNums(n).map(x=>({html:String(x), ok:x===n})), answer:`${a} + ${b} = ${n}`, word:txt};
+  }
+  if(r<0.45){
+    const n=1+rnd(98); const w=num2w(n);
+    return {type:'show', title:'🔢 קראי את המספר במילים ובחרי אותו בספרות', show:`<div class="sentence">${w}</div>`, cls:'letter', grid:'three',
+      opts:sixNums(n).map(x=>({html:String(x), ok:x===n})), answer:`${w} = ${n}`, word:w};
+  }
+  const n = Math.random()<0.35 ? 13+rnd(7) : (Math.random()<0.4 ? 10*(2+rnd(8)) : 13+rnd(88));
+  const w=num2w(n);
+  return {type:'listen', title:'🔢 הקשיבי למספר ובחרי אותו (זהירות: 13 ≠ 30!)', audio:w, cls:'letter', grid:'three',
+    opts:sixNums(n).map(x=>({html:String(x), ok:x===n})), answer:`${w} = ${n}`, word:w, tip:(n<20||n%10===0)?TEENTIP:''};
+}
+// whole alphabet, look-alike letters
+function qLetters3(){
+  const L=pick(LET26,1)[0];
+  const look={b:'dpq',d:'bpq',p:'qbd',q:'pgd',m:'nw',n:'mu',u:'nv',w:'mv',i:'jl',j:'ig',l:'it',f:'t',t:'f',g:'qj',h:'n',a:'eo',e:'ac',c:'eo',o:'c',v:'uw',y:'v',k:'h',r:'n',s:'z',z:'s',x:'k'};
+  const near=(look[L]||'').split('').filter(x=>x!==L);
+  const r=Math.random();
+  if(r<0.4){
+    const others=[...near,...pick(LET26.filter(x=>x!==L&&!near.includes(x)),5)].slice(0,5);
+    return {type:'show', title:'Aa בחרי את האות הקטנה שמתאימה לאות הגדולה', show:`<div class="big">${L.toUpperCase()}</div>`, cls:'letter', grid:'three',
+      opts:shuffle([L,...others]).map(x=>({html:x, ok:x===L})), answer:`${L.toUpperCase()} = ${L}`};
+  }
+  if(r<0.75){
+    const others=[...near,...pick(LET26.filter(x=>x!==L&&!near.includes(x)),5)].slice(0,5).map(x=>x.toUpperCase());
+    return {type:'show', title:'Aa בחרי את האות הגדולה שמתאימה לאות הקטנה', show:`<div class="big">${L}</div>`, cls:'letter', grid:'three',
+      opts:shuffle([L.toUpperCase(),...others]).map(x=>({html:x, ok:x===L.toUpperCase()})), answer:`${L} = ${L.toUpperCase()}`};
+  }
+  // which letter comes next in the alphabet?
+  const i=rnd(25), nx=LET26[i+1];
+  const others=pick(LET26.filter(x=>x!==nx),5);
+  return {type:'show', title:'🔤 איזו אות באה אחרי? (לפי סדר ה-ABC)', show:`<div class="big">${LET26[i].toUpperCase()} ${LET26[i]} → ?</div>`, cls:'letter', grid:'three',
+    opts:shuffle([nx,...others]).map(x=>({html:x, ok:x===nx})), answer:`אחרי ${LET26[i]} בא ${nx}`};
+}
+const READ3 = [
+  {w:'I have a red ball.',h:'יש לי כדור אדום.'},{w:'I have a blue ball.',h:'יש לי כדור כחול.'},{w:'My cat is black.',h:'החתול שלי שחור.'},
+  {w:'My dog is white.',h:'הכלב שלי לבן.'},{w:'I like apples.',h:'אני אוהבת תפוחים.'},{w:'I like bananas.',h:'אני אוהבת בננות.'},
+  {w:'I can swim.',h:'אני יודעת לשחות.'},{w:'I can run.',h:'אני יודעת לרוץ.'},{w:'The sun is hot.',h:'השמש חמה.'},
+  {w:'The cat is sad.',h:'החתול עצוב.'},{w:'The dog is happy.',h:'הכלב שמח.'},{w:'I have a big book.',h:'יש לי ספר גדול.'},
+  {w:'I have a small book.',h:'יש לי ספר קטן.'},{w:'My mom has a car.',h:'לאמא שלי יש מכונית.'},{w:'My brother has a bike.',h:'לאח שלי יש אופניים.'},
+  {w:'I eat bread and cheese.',h:'אני אוכלת לחם וגבינה.'},{w:'I drink milk.',h:'אני שותה חלב.'},{w:'I have two eyes and two ears.',h:'יש לי שתי עיניים ושתי אוזניים.'},
+  {w:'The book is on the table.',h:'הספר על השולחן.'},{w:'The ball is in the box.',h:'הכדור בתוך הקופסה.'},{w:'My sister has a cat.',h:'לאחות שלי יש חתול.'},
+  {w:'The water is cold.',h:'המים קרים.'}
+];
+function qRead3(){
+  if(Math.random()<0.5){
+    const t=pick(READ3,1)[0]; const others=lookalikes(t,READ3,3);
+    return {type:'show', title:'📖 קראי את המשפט. מה הפירוש?', show:`<div class="sentence">${t.w}</div>`, cls:'heb', grid:'rows',
+      opts:shuffle([t,...others]).map(v=>({html:v.h, ok:v.w===t.w})), answer:`${t.w} = ${t.h}`, word:t.w};
+  }
+  const t=pick(VOCAB3,1)[0]; const others=uniqH(lookalikes(t,ALLV.filter(v=>v.h!==t.h),8)).slice(0,5);
+  return {type:'show', title:'📖 קראי בעיון – המילים דומות! מה הפירוש?', show:`<div class="big" style="font-size:42px">${t.w}</div>`, cls:'heb', grid:'three',
+    opts:shuffle([t,...others]).map(v=>({html:v.h, ok:v.w===t.w})), answer:`${t.w} = ${t.h}`, word:t.w};
+}
+function uniqH(a){const s=new Set();return a.filter(v=>!s.has(v.h)&&s.add(v.h))}
+function qWrite3(){
+  if(Math.random()<0.3){
+    const n=13+rnd(88), w=num2w(n);
+    return {type:'write', num:true, title:'✍️ כתבי את המספר בספרות', w, alts:[String(n)], answer:`${w} = ${n}`, word:w};
+  }
+  const t=pick(VOCAB3,1)[0];
+  return {type:'write', title:'✍️ כתבי בעברית מה פירוש המילה', w:t.w, alts:t.a, answer:`${t.w} = ${t.a[0]}`, word:t.w};
+}
+// sentence → picture, wrong pictures differ by one detail (color / number / who / feeling / action)
+const BALLS={red:'🔴',blue:'🔵',green:'🟢',yellow:'🟡',orange:'🟠',purple:'🟣',black:'⚫',white:'⚪'};
+const ANIM=[['cat','🐱'],['dog','🐶'],['lion','🦁'],['frog','🐸'],['monkey','🐵'],['bear','🐻'],['rabbit','🐰']];
+const FEEL=[['happy','😀'],['sad','😢'],['hot','🥵'],['cold','🥶']];
+const ACTS=[['swim','🏊'],['run','🏃'],['read','📖'],['ride a bike','🚴']];
+const FAM=[['My mom','👩'],['My dad','👨'],['My brother','👦'],['My sister','👧'],['My grandma','👵'],['My grandpa','👴']];
+const FOOD=[['pizza','🍕'],['apples','🍎'],['bananas','🍌'],['cake','🎂'],['ice cream','🍦'],['milk','🥛'],['cheese','🧀'],['carrots','🥕']];
+function sent3(){
+  const r=Math.random();
+  if(r<0.3){
+    const cs=Object.keys(BALLS); const [c,c2]=pick(cs,2); const n=2+rnd(4); const m=n===5?4:(n===2?3:(Math.random()<.5?n-1:n+1));
+    return {s:`I have ${NUMBERS[n]} ${c} balls.`, opts:[{p:BALLS[c].repeat(n),ok:true},{p:BALLS[c2].repeat(n)},{p:BALLS[c].repeat(m)}]};
+  }
+  if(r<0.55){
+    const [A,B]=pick(ANIM,2), [F,G]=pick(FEEL,2);
+    return {s:`The ${A[0]} is ${F[0]}.`, opts:[{p:A[1]+' '+F[1],ok:true},{p:A[1]+' '+G[1]},{p:B[1]+' '+F[1]}]};
+  }
+  if(r<0.75){
+    const [A,B]=pick(ACTS,2), [P,Q]=pick(FAM,2);
+    return {s:`${P[0].replace('My ','My ')} can ${A[0]}.`, opts:[{p:P[1]+' '+A[1],ok:true},{p:P[1]+' '+B[1]},{p:Q[1]+' '+A[1]}]};
+  }
+  const [P,Q]=pick(FAM,2), [x,y]=pick(FOOD,2);
+  return {s:`${P[0]} likes ${x[0]}.`, opts:[{p:P[1]+' ❤️ '+x[1],ok:true},{p:P[1]+' ❤️ '+y[1]},{p:Q[1]+' ❤️ '+x[1]}]};
+}
+function qSentence3(){
+  const t=sent3();
+  return {type:'show', title:'🖼️ קראי בעיון! התמונות דומות – רק אחת נכונה', show:`<div class="sentence">${t.s}</div>`, grid:'rows',
+    opts:shuffle(t.opts).map(o=>({html:`<span class="pic" style="font-size:30px">${o.p}</span>`, ok:!!o.ok})), answer:t.s, word:t.s};
+}
+function qListenSentence3(){
+  const t=sent3();
+  return {type:'listen', title:'👂 הקשיבי למשפט (בלי לקרוא!) ובחרי את התמונה', audio:t.s, grid:'rows',
+    opts:shuffle(t.opts).map(o=>({html:`<span class="pic" style="font-size:30px">${o.p}</span>`, ok:!!o.ok})), answer:t.s, word:t.s};
+}
+function qSpeak3(){
+  const r=Math.random();
+  if(r<0.45){const v=pick(VOCAB3,1)[0]; return {type:'speak',target:v.w,pic:picHTML(v),show:false,heb:v.h,title:'🎤 מה בתמונה? אמרי באנגלית (בלי לראות את המילה!)'};}
+  if(r<0.7){const n=13+rnd(88); return {type:'speak',title:'🎤 איך אומרים את המספר באנגלית?',target:num2w(n).replace(/-/g,' '),pic:numPic(n),show:false,tr:trNum(n),num:n,tip:(n<20||n%10===0)?TEENTIP:''};}
+  if(r<0.85){const t=pick(READ3,1)[0]; return {type:'speak',title:'🎤 קראי את המשפט בקול',target:t.w,pic:'',show:true,heb:t.h,sentence:true};}
+  const t=sent3(); const o=t.opts.find(x=>x.ok);
+  return {type:'speak',title:'🎤 קראי את המשפט בקול',target:t.s,pic:`<span style="font-size:44px;direction:ltr;display:inline-block">${o.p}</span>`,show:true,sentence:true};
+}
+
 /* ============ SECTIONS ============ */
 const SECTIONS = {
-  listen:{name:'שמע ובחר תמונה',ic:'🎧',cls:'c1',n:10,sub:['אוצר מילים','6 תמונות, מילים דומות'],gen:[qListenPicture,qListenPictureH]},
-  first:{name:'צליל פותח',ic:'🔤',cls:'c2',n:10,sub:['באיזו אות מתחילה המילה?','6 אותיות, אותיות דומות'],gen:[qFirstSound,qFirstSoundH]},
-  numbers:{name:'מספרים 0–12',name2:'מספרים וחשבון',ic:'🔢',cls:'c3',n:10,sub:['שומעים ובוחרים','two plus three = ?'],gen:[qNumber,qNumberH]},
-  letters:{name:'אות גדולה וקטנה',ic:'Aa',cls:'c4',n:10,sub:['A B D E G I N T','הפוך + זוגות מבלבלים'],gen:[qLetters,qLettersH]},
-  read:{name:'קוראים ומתרגמים',ic:'📖',cls:'c5',n:10,sub:['dad, bag, I like…','מילים דומות + משפטים'],gen:[qRead,qReadH]},
-  write:{name:'כותבים בעברית',ic:'✍️',cls:'c7',n:8,sub:[null,'מקלידים את הפירוש'],gen:[null,qWrite]},
-  sentence:{name:'משפט ותמונה',ic:'🖼️',cls:'c6',n:8,sub:['I have a dog.','I have three ducks.'],gen:[qSentence,qSentenceH]},
-  speak:{name:'אומרים בקול',ic:'🎤',cls:'c9',n:8,sub:['אומרים – והאפליקציה בודקת','בלי לראות את המילה + משפטים'],gen:[qSpeak,qSpeakH]},
-  lsent:{name:'שומעים משפט',ic:'👂',cls:'c8',n:8,sub:[null,'בלי לקרוא – רק להקשיב'],gen:[null,qListenSentence]},
+  listen:{name:'שמע ובחר תמונה',ic:'🎧',cls:'c1',n:10,sub:['אוצר מילים','6 תמונות, מילים דומות','69 מילים חדשות'],gen:[qListenPicture,qListenPictureH,qListen3]},
+  first:{name:'צליל פותח',ic:'🔤',cls:'c2',n:10,sub:['באיזו אות מתחילה המילה?','6 אותיות, אותיות דומות','כל האלפבית A–Z'],gen:[qFirstSound,qFirstSoundH,qFirst3]},
+  numbers:{name:'מספרים 0–12',name2:'מספרים וחשבון',name3:'מספרים עד 100',ic:'🔢',cls:'c3',n:10,sub:['שומעים ובוחרים','two plus three = ?','13 או 30? + חשבון'],gen:[qNumber,qNumberH,qNumber3]},
+  letters:{name:'אות גדולה וקטנה',ic:'Aa',cls:'c4',n:10,sub:['A B D E G I N T','הפוך + זוגות מבלבלים','כל האותיות + סדר ABC'],gen:[qLetters,qLettersH,qLetters3]},
+  read:{name:'קוראים ומתרגמים',ic:'📖',cls:'c5',n:10,sub:['dad, bag, I like…','מילים דומות + משפטים','My cat is black.'],gen:[qRead,qReadH,qRead3]},
+  write:{name:'כותבים בעברית',name3:'כותבים',ic:'✍️',cls:'c7',n:8,sub:[null,'מקלידים את הפירוש','פירוש + מספרים בספרות'],gen:[null,qWrite,qWrite3]},
+  sentence:{name:'משפט ותמונה',ic:'🖼️',cls:'c6',n:8,sub:['I have a dog.','I have three ducks.','The cat is happy.'],gen:[qSentence,qSentenceH,qSentence3]},
+  speak:{name:'אומרים בקול',ic:'🎤',cls:'c9',n:8,sub:['אומרים – והאפליקציה בודקת','בלי לראות את המילה + משפטים','מילים חדשות + מספרים עד 100'],gen:[qSpeak,qSpeakH,qSpeak3]},
+  lsent:{name:'שומעים משפט',ic:'👂',cls:'c8',n:8,sub:[null,'בלי לקרוא – רק להקשיב','My mom can swim.'],gen:[null,qListenSentence,qListenSentence3]},
 };
 function examQs(){
+  if(LEVEL===3) return [qListen3,qListen3,qListen3,qListen3,qFirst3,qFirst3,qFirst3,qNumber3,qNumber3,qNumber3,qNumber3,qNumber3,qNumber3,
+    qLetters3,qLetters3,qLetters3,qRead3,qRead3,qRead3,qRead3,qWrite3,qWrite3,qWrite3,qWrite3,qSentence3,qSentence3,qSentence3,
+    qListenSentence3,qListenSentence3,qListenSentence3].map(f=>f());
   if(LEVEL===1) return [qListenPicture,qListenPicture,qListenPicture,qFirstSound,qFirstSound,qFirstSound,qNumber,qNumber,qNumber,
     qLetters,qLetters,qLetters,qRead,qRead,qRead,qSentence,qSentence,qSentence].map(f=>f());
   return [qListenPictureH,qListenPictureH,qListenPictureH,qListenPictureH,qFirstSoundH,qFirstSoundH,qFirstSoundH,qFirstSoundH,
@@ -713,11 +914,11 @@ function home(){
   const daysLeft = Math.ceil((new Date('2026-11-22T08:00:00')-new Date())/86400000);
   const tiles = Object.entries(SECTIONS).filter(([k,s])=>s.gen[L]).map(([k,s])=>{
     const st=(store[skey(k)]&&store[skey(k)].stars)||0;
-    return `<button class="tile ${s.cls}" onclick="start('${k}')"><span class="ic">${s.ic}</span><b>${(L&&s.name2)||s.name}</b><small dir="auto">${s.sub[L]}</small>
+    return `<button class="tile ${s.cls}" onclick="start('${k}')"><span class="ic">${s.ic}</span><b>${(L===2&&s.name3)||(L&&s.name2)||s.name}</b><small dir="auto">${s.sub[L]}</small>
       <div class="prog">${starRow(st)}</div></button>`}).join('');
   const es=(store[skey('exam')]&&store[skey('exam')].stars)||0;
   const l1done = ['listen','first','numbers','letters','read','sentence','exam'].filter(k=>store[k]&&store[k].stars>=2).length;
-  document.body.classList.toggle('lvl2',LEVEL===2);
+  document.body.classList.toggle('lvl2',LEVEL===2); document.body.classList.toggle('lvl3',LEVEL===3);
   $('#app').innerHTML = `
   <header><div class="brand"><div class="owl">🦉</div><div><h1>המורה לאנגלית שלי</h1><div class="sub">הכנה למבחן כיתה ג' · 22.11</div></div></div>
   <button class="pchip" onclick="profiles()" aria-label="החלפת ילד">${curP().av} ${esc(curP().name)} · ⭐ ${totalStars()}<small>החלפה</small></button></header>
@@ -725,18 +926,21 @@ function home(){
   <div class="levels">
     <button class="lv ${LEVEL===1?'on':''}" onclick="setLevel(1)">🌱 רמה 1<small>רגיל</small></button>
     <button class="lv ${LEVEL===2?'on':''}" onclick="setLevel(2)">🔥 רמה 2<small>אתגר</small></button>
+    <button class="lv ${LEVEL===3?'on':''}" onclick="setLevel(3)">🚀 רמה 3<small>מומחה</small></button>
   </div>
   <div class="bubble">${LEVEL===1
     ?`היי ${esc(curP().name)}! אני ינשופית 🦉 ואני אעזור לך להצליח במבחן באנגלית. ${daysLeft>0?`נשארו עוד <b>${daysLeft}</b> ימים למבחן.`:''} בכל משחק אפשר לאסוף עד 3 כוכבים.
       ${l1done>=4?'<br>🔥 את כבר ממש טובה – אולי תנסי את <b>רמה 2</b>?':''}`
+    :LEVEL===3?`🚀 <b>רמה 3 – מומחה!</b> כאן יש <b>69 מילים חדשות</b> (צבעים, חיות, משפחה, גוף, אוכל, חפצים ופעולות), <b>מספרים עד 100</b>, כל האלפבית ומשפטים ארוכים יותר.
+      <br>זה כבר מעבר למבחן – בשביל מי שרוצה להיות אלופה באמת! 🌟`
     :`🔥 <b>רמה 2 – אתגר!</b> כאן יש יותר תשובות לבחור מהן, מילים ואותיות שדומות זו לזו, חשבון באנגלית, משפטים שלמים, וכתיבת הפירוש בעברית – בדיוק כמו במבחן.
       <br>במבחן הניסיון של רמה 2 יש <b>רק ניסיון אחד</b> לכל שאלה. בהצלחה! 💪`}</div>
   <div class="menu">
     ${tiles}
-    <button class="tile wide" onclick="start('exam')"><span class="ic">🏆</span><b>${LEVEL===1?'מבחן ניסיון':'מבחן ניסיון – אתגר'}</b>
-      <small>${LEVEL===1?'18 שאלות מכל החלקים – כמו במבחן האמיתי':'26 שאלות קשות · ניסיון אחד לכל שאלה · ציון בסוף'}</small>
+    <button class="tile wide" onclick="start('exam')"><span class="ic">🏆</span><b>${LEVEL===1?'מבחן ניסיון':LEVEL===2?'מבחן ניסיון – אתגר':'מבחן מומחה'}</b>
+      <small>${LEVEL===1?'18 שאלות מכל החלקים – כמו במבחן האמיתי':LEVEL===2?'26 שאלות קשות · ניסיון אחד לכל שאלה · ציון בסוף':'30 שאלות · מילים חדשות ומספרים עד 100 · ניסיון אחד'}</small>
       <div class="prog">${starRow(es)}</div></button>
-    <button class="tile wide" style="background:linear-gradient(135deg,#00b894,#55efc4)" onclick="cards()"><span class="ic">🃏</span><b>כרטיסיות מילים</b><small>כל 33 המילים – לוחצים ושומעים</small></button>
+    <button class="tile wide" style="background:linear-gradient(135deg,#00b894,#55efc4)" onclick="cards()"><span class="ic">🃏</span><b>כרטיסיות מילים</b><small>${LEVEL===3?'כל 102 המילים ומספרים עד 100':'כל 33 המילים – לוחצים ושומעים'}</small></button>
   </div>
   <div class="note">טיפ להורים: כדאי להשתמש עם רמקול או אוזניות. בחלק "כותבים בעברית" צריך מקלדת עברית בטלפון.</div>`;
   if(!ttsOK) $('#ttswarn').style.display='block';
@@ -749,7 +953,12 @@ function cards(){
   <h3 style="margin:20px 4px 8px">🔢 מספרים</h3>
   <div class="cards">${NUMBERS.map((n,i)=>`<button class="fc" onclick="say('${n}',0.8)"><div class="pic" style="font-weight:800">${i}</div><div class="w">${n}</div></button>`).join('')}</div>
   <h3 style="margin:20px 4px 8px">📖 צירופים</h3>
-  <div class="cards">${READ.filter(r=>r.w.startsWith('I ')).map(r=>`<button class="fc" onclick="say('${r.w}',0.8)"><div class="w">${r.w}</div><div class="h">${r.h}</div></button>`).join('')}</div>`;
+  <div class="cards">${READ.filter(r=>r.w.startsWith('I ')).map(r=>`<button class="fc" onclick="say('${r.w}',0.8)"><div class="w">${r.w}</div><div class="h">${r.h}</div></button>`).join('')}</div>
+  ${LEVEL===3?`<h3 style="margin:20px 4px 8px">🚀 מילים של רמה 3</h3>
+  <div class="cards">${VOCAB3.map(v=>`<button class="fc" onclick="say('${v.w}',0.8)"><div class="pic">${picHTML(v)}</div><div class="w">${v.w}</div><div class="h">${v.h}</div></button>`).join('')}</div>
+  <h3 style="margin:20px 4px 8px">🔢 מספרים 13–100</h3>
+  <div class="bubble" style="font-size:14px">${TEENTIP}</div>
+  <div class="cards">${[13,14,15,16,17,18,19,20,30,40,50,60,70,80,90,100,21,35,47,58,99].map(n=>`<button class="fc" onclick="say('${num2w(n)}',0.8)"><div class="pic" style="font-weight:800">${n}</div><div class="w">${num2w(n)}</div><div class="h">${trNum(n)}</div></button>`).join('')}</div>`:''}`;
   scrollTo(0,0);
 }
 
@@ -757,7 +966,7 @@ let S=null;
 function start(key){
   const L=LEVEL-1;
   const qs = key==='exam' ? examQs() : Array.from({length:SECTIONS[key].n},()=>SECTIONS[key].gen[L]());
-  S={key,qs,i:0,score:0,missed:[],strict:(LEVEL===2&&key==='exam')};
+  S={key,qs,i:0,score:0,missed:[],strict:(LEVEL>=2&&key==='exam')};
   render();
 }
 function render(){
@@ -768,7 +977,7 @@ function render(){
     body = renderSpeak(q);
   } else if(q.type==='write'){
     body = `<div class="big" style="font-size:46px">${q.w}</div>
-      <input id="ans" class="ans" dir="rtl" autocomplete="off" placeholder="כתבי כאן בעברית…">
+      <input id="ans" class="ans" ${q.num?'dir="ltr" inputmode="numeric" placeholder="123"':'dir="rtl" placeholder="כתבי כאן בעברית…"'} autocomplete="off">
       <div><button class="next" id="chk">בדיקה ✔️</button></div>`;
   } else {
     body = `${listen?`<button class="speak" id="spk" aria-label="להשמיע">🔊</button>
@@ -815,7 +1024,7 @@ function answer(k,btn){
       $('#fb').innerHTML = `${pick(TRY,1)[0]}<span class="hint">התשובה הנכונה מסומנת בירוק: <span class="eng">${q.answer}</span></span>${nextBtn()}`;
       $('#nx').onclick=next;
     } else {
-      $('#fb').innerHTML = `${pick(TRY,1)[0]}<span class="hint">נסי שוב${q.type==='listen'?' – אפשר ללחוץ על הרמקול 🔊':''}</span>`;
+      $('#fb').innerHTML = `${pick(TRY,1)[0]}<span class="hint">נסי שוב${q.type==='listen'?' – אפשר ללחוץ על הרמקול 🔊':''}</span>${q.tip?`<span class="hint">${q.tip}</span>`:''}`;
     }
   }
 }
@@ -850,9 +1059,9 @@ function finish(){
   if(stars>=2) confetti();
   const isExam=S.key==='exam';
   const grade=Math.round(pct*100);
-  const msg = stars===3?(LEVEL===2?'וואו! עברת את האתגר! את מוכנה למבחן! 🏆':'את אלופה! מוכנה למבחן! 🏆')
+  const msg = stars===3?(LEVEL===3?'וואו! את מומחית לאנגלית! 🚀🏆':LEVEL===2?'וואו! עברת את האתגר! את מוכנה למבחן! 🏆':'את אלופה! מוכנה למבחן! 🏆')
     :stars===2?'עבודה מצוינת! עוד קצת תרגול ואת שם 💪':stars===1?'התחלה טובה! בואי ננסה שוב 🌱':'לא נורא – כל תרגול מקרב אותך! 💜';
-  const up = LEVEL===1&&stars===3 ? `<button class="btn2" onclick="setLevel(2)">🔥 לרמה 2</button>`:'';
+  const up = stars===3&&LEVEL<3 ? (LEVEL===1?`<button class="btn2" onclick="setLevel(2)">🔥 לרמה 2</button>`:`<button class="btn2" onclick="setLevel(3)">🚀 לרמה 3</button>`):'';
   $('#app').innerHTML = `<div class="qcard end">
     <div class="trophy">${stars===3?'🏆':stars===2?'🥈':'🌟'}</div>
     <h2>${msg}</h2>
@@ -871,7 +1080,7 @@ function profiles(){
   const cards=PROF.list.map(p=>{
     const st=readStore(p.id);
     return `<div class="pcard-wrap">
-      <button class="pcard" onclick="choose('${p.id}')"><span class="pav">${p.av}</span><b>${esc(p.name)}</b><small>⭐ ${totalStars(st)} · ${st._level===2?'🔥 רמה 2':'🌱 רמה 1'}</small></button>
+      <button class="pcard" onclick="choose('${p.id}')"><span class="pav">${p.av}</span><b>${esc(p.name)}</b><small>⭐ ${totalStars(st)} · ${st._level===3?'🚀 רמה 3':st._level===2?'🔥 רמה 2':'🌱 רמה 1'}</small></button>
       ${manage?`<div class="pman"><button onclick="editProfile('${p.id}')">✏️ עריכה</button><button onclick="askDel('${p.id}')">🗑️ מחיקה</button></div>`:''}
     </div>`}).join('');
   $('#app').innerHTML=`
@@ -944,7 +1153,7 @@ const H='\u0590-\u05FF';
 const MASC=[
   ['את אלופה','אתה אלוף'],['וואו, אלופה','וואו, אלוף'],['איזו חכמה','איזה חכם'],['את מוכנה','אתה מוכן'],['ואת שם','ואתה שם'],
   ['את כבר ממש טובה','אתה כבר ממש טוב'],['לא בטוחה','לא בטוח'],['חושבת','חושב'],['אמרה נכון','אמר נכון'],
-  ['אני אוהבת','אני אוהב'],['אני גדולה','אני גדול'],['אולי תנסי','אולי תנסה'],
+  ['אני אוהבת','אני אוהב'],['אני יודעת','אני יודע'],['אני אוכלת','אני אוכל'],['את מומחית','אתה מומחה'],['להיות אלופה','להיות אלוף'],['אני גדולה','אני גדול'],['אולי תנסי','אולי תנסה'],
   ['הקשיבי','הקשב'],['ובחרי','ובחר'],['בחרי','בחר'],['קראי','קרא'],['אמרי','אמור'],['לחצי','לחץ'],['נסי','נסה'],
   ['כתבי','כתוב'],['ודברי','ודבר'],['דברי','דבר'],['ותגידי','ותגיד'],['תגידי','תגיד'],['בואי','בוא'],['שימי','שים'],
   ['תשאלי','תשאל'],['תנסי','תנסה'],['ענית','ענית']
