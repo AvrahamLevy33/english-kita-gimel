@@ -115,6 +115,7 @@ body.lvl4 .lv.on{border-color:#a55eea;background:#f6e9ff}
 .chip{display:inline-flex;align-items:center;background:#fff;border-radius:14px;box-shadow:0 2px 0 #f0e2c8;overflow:hidden}
 .chipw{border:0;background:none;font-family:inherit;font-size:16px;padding:8px 10px;cursor:pointer;color:var(--ink)}
 .chipw small{color:var(--muted)}
+.live{direction:ltr;font-size:14px;color:var(--muted);min-height:20px;margin-top:4px}
 .chipx{border:0;background:#ffecec;color:#c0392b;font-size:13px;padding:8px 9px;cursor:pointer}
 body.lvl3 .lv.on{border-color:#0984e3;background:#e3f0ff}
 .lv{padding:10px 4px}
@@ -1239,10 +1240,63 @@ function judgeLine(line, alts){
   return {ok: !numMiss && ok/toks.length>=need, miss, toks};
 }
 let ST=null;
+/* ---- press-to-start / press-to-stop recording (keeps listening until the 2nd tap) ---- */
+let REC=null;
+function recStart(){
+  try{ if(ttsOK) speechSynthesis.cancel(); }catch(e){}
+  REC={on:true, heard:[], r:null, cb:null, safety:null};
+  recSpawn();
+  setMicUI(true);
+}
+function recSpawn(){
+  if(!REC||!REC.on) return;
+  let r;
+  try{ r=new SR(); r.lang='en-US'; r.interimResults=true; r.maxAlternatives=5; r.continuous=true; }
+  catch(e){ REC=null; toParentMode(); setMicUI(false); return; }
+  REC.r=r; rec=r;
+  r.onresult=e=>{
+    for(let k=e.resultIndex;k<e.results.length;k++){const res=e.results[k];
+      for(let i=0;i<res.length;i++){const t=res[i].transcript.trim(); if(t&&!REC.heard.includes(t)) REC.heard.push(t);}}
+    const last=REC.heard[REC.heard.length-1]; if(last&&$('#live')) $('#live').textContent='🎙️ '+last;
+  };
+  r.onerror=e=>{
+    if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){ const cur=REC; REC=null; setMicUI(false); toParentMode(); if(cur&&cur.cb) cur.cb(null); }
+    if(e.error==='network'){ const cur=REC; REC=null; setMicUI(false); toParentMode('📶 אין חיבור לאינטרנט – בדיקת הקריאה צריכה אינטרנט. בינתיים: קראי בקול, ואמא או אבא יגידו אם זה נכון.'); if(cur&&cur.cb) cur.cb(null); }
+  };
+  r.onend=()=>{
+    if(rec===r) rec=null;
+    if(!REC) return;
+    if(REC.on){ setTimeout(recSpawn,120); return; }   // the browser stopped by itself (silence) – keep listening
+    recFinish();
+  };
+  try{ r.start(); }catch(e){ setTimeout(recSpawn,300); }
+}
+function recStop(cb){
+  if(!REC) return;
+  REC.on=false; REC.cb=cb;
+  try{ REC.r && REC.r.stop(); }catch(e){}
+  REC.safety=setTimeout(recFinish,1800);   // in case the browser never fires "end"
+  setMicUI(false,true);
+}
+function recFinish(){
+  if(!REC||REC.on) return;
+  const cur=REC; REC=null; clearTimeout(cur.safety);
+  if(cur.cb) cur.cb(cur.heard);
+}
+function recAbort(){ if(REC){ REC.on=false; REC.cb=null; try{REC.r&&REC.r.abort()}catch(e){} REC=null; } }
+function setMicUI(on,checking){
+  const m=$('#mic'); if(!m) return;
+  m.classList.toggle('rec',!!on); m.textContent=on?'⏹️':'🎤'; m.disabled=!!checking;
+  const st=$('#micst');
+  if(st) st.innerHTML = checking ? 'בודקת… ⏳'
+    : on ? (ST&&ST.phase==='repeat' ? '🔴 מקליטה… חזרי על המשפט, ולחצי שוב כשסיימת' : '🔴 מקליטה… קראי את השורה, ולחצי שוב כשסיימת')
+    : (srBroken ? 'קראי בקול – ואמא או אבא יגידו אם זה נכון' : (ST&&ST.phase==='repeat' ? 'לחצי על המיקרופון וחזרי אחריי' : 'לחצי על המיקרופון והתחילי לקרוא'));
+}
+
 function storyStart(){
-  try{rec&&rec.abort()}catch(e){}
+  try{rec&&rec.abort()}catch(e){} recAbort();
   const s=makeStory();
-  ST={...s,i:0,tries:0,rep:0,phase:'read',first:0,miss:[],helped:false,added:[],msg:'',done:false};
+  ST={...s,i:0,phase:'read',first:0,miss:[],helped:false,added:[],msg:''};
   renderStory();
 }
 function lineHTML(line,i){
@@ -1252,57 +1306,59 @@ function lineHTML(line,i){
 function renderStory(){
   const L=ST.lines;
   $('#app').innerHTML=`
-  <div class="topbar"><button class="back" onclick="home()">→ יציאה</button>
+  <div class="topbar"><button class="back" onclick="recAbort();home()">→ יציאה</button>
     <div class="bar"><i style="width:${ST.i/L.length*100}%"></i></div><b>${Math.min(ST.i+1,L.length)}/${L.length}</b></div>
   <div class="qcard story">
     <div class="stitle">📚 ${ST.title}</div>
     <div class="slines">${L.map((l,i)=>`<div class="sline ${i<ST.i?'done':i===ST.i?'cur':'todo'}">${i<ST.i?'✅ ':i===ST.i?'👉 ':''}${lineHTML(l,i)}</div>`).join('')}</div>
-    <div class="sstatus" id="sst">${ST.msg || (ST.phase==='repeat'?'👂 הקשיבי לי, ואז חזרי אחריי':'📖 קראי בקול את השורה המסומנת')}</div>
+    <div class="sstatus" id="sst">${ST.msg || (ST.phase==='repeat'?'👂 הקשיבי לי, ואז חזרי אחריי':'📖 לחצי על המיקרופון, קראי את השורה המסומנת, ולחצי שוב כשסיימת')}</div>
     <div><button class="lnk" id="slisten">🔊 ${ST.phase==='repeat'?'להקשיב שוב':'להקשיב לשורה'}</button></div>
     <button class="mic" id="mic" aria-label="להקליט">🎤</button>
-    <div class="again" id="micst">${srBroken?'קראי בקול – ואמא או אבא יגידו אם זה נכון':'לחצי על המיקרופון וקראי'}</div>
-    <div id="parent" class="${srBroken?'parent':'parent hidden'}"><button class="pg" id="pgood">✅ קראה נכון</button><button class="pb" id="pbad">🔁 לא הצליח</button></div>
-    <div class="feedback" id="fb"></div>
+    <div class="again" id="micst"></div>
+    <div class="live" id="live"></div>
+    <div id="parent" class="${srBroken?'parent':'parent hidden'}"><button class="pg" id="pgood">✅ ${ST.phase==='repeat'?'חזרה אחריי':'קראה נכון'}</button>${ST.phase==='read'?'<button class="pb" id="pbad">🔁 לא הצליח</button>':''}</div>
   </div>`;
+  setMicUI(false);
   const line=L[ST.i];
-  $('#slisten').onclick=()=>{ if(ST.phase==='read') ST.helped=true; say(line,0.75); };
-  $('#mic').onclick=()=>recognize(line,true,alts=>{const j=judgeLine(line,alts); storyResult(j.ok, j.miss, alts[0]||'');});
-  $('#pgood').onclick=()=>storyResult(true,[],''); $('#pbad').onclick=()=>storyResult(false,[],'');
-  if(ST.cont) { $('#fb').innerHTML=`<button class="next" id="nx">➡️ ממשיכים לשורה הבאה</button>`; $('#nx').onclick=storyNextLine; }
+  $('#slisten').onclick=()=>{ if(REC) return; if(ST.phase==='read') ST.helped=true; say(line,0.75); };
+  $('#mic').onclick=()=>{
+    if(srBroken){ say(line,0.75); return; }
+    if(!REC) return recStart();
+    recStop(heard=>{
+      if(heard===null) return;                         // mic blocked → parent mode already shown
+      if(!heard.length){ setMicUI(false); $('#micst').innerHTML='לא שמעתי כלום 🙉 לחצי שוב, קרוב לטלפון, וקראי חזק וברור'; return; }
+      const j=judgeLine(line,heard);
+      storyResult(j.ok, j.miss, heard[heard.length-1]||'');
+    });
+  };
+  $('#pgood').onclick=()=>storyResult(true,[],'');
+  if($('#pbad')) $('#pbad').onclick=()=>storyResult(false,[],'');
 }
 function storyResult(ok, miss, heard){
   if(!ST||!$('#sst')||ST.i>=ST.lines.length) return;
   const line=ST.lines[ST.i], toks=line.split(/\s+/);
-  const heardTxt = heard?`<br><small>שמעתי: <span class="heard">${heard}</span></small>`:'';
+  const heardTxt = heard?`<br><small>שמעתי: <span class="heard">${esc(heard)}</span></small>`:'';
+  if(ST.phase==='repeat'){            // after repeating – always move on
+    ST.msg = ok ? `${pick(PRAISE,1)[0]} חזרת יפה!` : 'יופי שניסית! 💜 נמשיך';
+    return storyNextLine();
+  }
   if(ok){
-    if(ST.phase==='read'&&ST.tries===0&&!ST.helped) ST.first++;
-    ST.msg=`${pick(PRAISE,1)[0]}`; return storyNextLine();
+    if(!ST.helped) ST.first++;
+    ST.msg=pick(PRAISE,1)[0];
+    return storyNextLine();
   }
-  ST.miss=miss; const missWords=miss.map(k=>toks[k]);
-  if(ST.phase==='read'){
-    ST.tries++;
-    if(ST.tries===1){
-      ST.msg=(missWords.length?'כמעט! 💪 המילים <b class="missw">באדום</b> היו קשות. נסי לקרוא שוב':'לא הצלחתי לשמוע טוב 🙉 נסי לקרוא שוב, לאט וברור')+heardTxt;
-      return renderStory();
-    }
-    addReview(missWords); missWords.forEach(w=>{const c=cleanW(w); if(c&&!STOP.has(c)&&!ST.added.includes(c)) ST.added.push(c)});
-    ST.phase='repeat'; ST.miss=miss;
-    ST.msg='בואי נקרא יחד 🤝 הקשיבי לי, ואז חזרי אחריי'+heardTxt;
-    renderStory(); setTimeout(()=>say(line,0.7),400); return;
-  }
-  // repeat phase
-  ST.rep++;
+  // read wrong: mark the words, save them for review, the app reads the line, the child repeats
+  ST.miss=miss;
+  const missWords=miss.map(k=>toks[k]);
   addReview(missWords); missWords.forEach(w=>{const c=cleanW(w); if(c&&!STOP.has(c)&&!ST.added.includes(c)) ST.added.push(c)});
-  if(ST.rep>=2){
-    ST.msg='לא נורא! המילים הקשות נשמרו ב<b>מילים לחזרה</b> 🔁'+heardTxt; ST.cont=true; renderStory();
-  } else {
-    ST.msg='עוד פעם אחת: הקשיבי וחזרי אחריי 👂'+heardTxt; renderStory(); setTimeout(()=>say(line,0.7),400);
-  }
+  ST.phase='repeat';
+  ST.msg=(missWords.length?'כמעט! 💪 המילים <b class="missw">באדום</b> היו קשות.<br>':'לא הצלחתי לשמוע את כל השורה 🙉<br>')+'👂 הקשיבי לי, ואז לחצי על המיקרופון וחזרי אחריי'+heardTxt;
+  renderStory(); setTimeout(()=>say(line,0.7),400);
 }
 function storyNextLine(){
-  try{rec&&rec.abort()}catch(e){}
-  ST.i++; ST.tries=0; ST.rep=0; ST.phase='read'; ST.miss=[]; ST.helped=false; ST.cont=false;
-  if(ST.i<ST.lines.length){ const m=ST.msg; renderStory(); ST.msg=''; if(m) $('#sst').innerHTML=m+' <span class="hint" style="display:inline">עכשיו השורה הבאה 👇</span>'; return; }
+  recAbort(); try{rec&&rec.abort()}catch(e){}
+  ST.i++; ST.phase='read'; ST.miss=[]; ST.helped=false;
+  if(ST.i<ST.lines.length){ const m=ST.msg; ST.msg=''; renderStory(); if(m) $('#sst').innerHTML=m+'<br><span style="font-weight:400">עכשיו השורה הבאה 👇</span>'; return; }
   storyEnd();
 }
 function storyEnd(){
@@ -1349,6 +1405,7 @@ function examQs(){
 /* ============ SCREENS ============ */
 function starRow(st){return '⭐'.repeat(st)+'☆'.repeat(3-st)}
 function home(){
+  recAbort();
   if(!curP()) return profiles();
   try{rec&&rec.abort()}catch(e){}
   if(ttsOK){try{speechSynthesis.cancel()}catch(e){}}
@@ -1607,7 +1664,7 @@ const H='\u0590-\u05FF';
 const MASC=[
   ['את אלופה','אתה אלוף'],['וואו, אלופה','וואו, אלוף'],['איזו חכמה','איזה חכם'],['את מוכנה','אתה מוכן'],['ואת שם','ואתה שם'],
   ['את כבר ממש טובה','אתה כבר ממש טוב'],['לא בטוחה','לא בטוח'],['חושבת','חושב'],['אמרה נכון','אמר נכון'],
-  ['אני אוהבת','אני אוהב'],['אני רעבה','אני רעב'],['אני משחקת','אני משחק'],['את חוזרת','אתה חוזר'],['קראה נכון','קרא נכון'],['מומחית-על','מומחה-על'],['את אלופת','אתה אלוף'],['חזרי','חזור'],['דלגי','דלג'],['אני יודעת','אני יודע'],['אני אוכלת','אני אוכל'],['את מומחית','אתה מומחה'],['להיות אלופה','להיות אלוף'],['אני גדולה','אני גדול'],['אולי תנסי','אולי תנסה'],
+  ['אני אוהבת','אני אוהב'],['אני רעבה','אני רעב'],['אני משחקת','אני משחק'],['את חוזרת','אתה חוזר'],['קראה נכון','קרא נכון'],['מומחית-על','מומחה-על'],['את אלופת','אתה אלוף'],['חזרי','חזור'],['התחילי','התחל'],['חזרה אחריי','חזר אחריי'],['דלגי','דלג'],['אני יודעת','אני יודע'],['אני אוכלת','אני אוכל'],['את מומחית','אתה מומחה'],['להיות אלופה','להיות אלוף'],['אני גדולה','אני גדול'],['אולי תנסי','אולי תנסה'],
   ['הקשיבי','הקשב'],['ובחרי','ובחר'],['בחרי','בחר'],['קראי','קרא'],['אמרי','אמור'],['לחצי','לחץ'],['נסי','נסה'],
   ['כתבי','כתוב'],['ודברי','ודבר'],['דברי','דבר'],['ותגידי','ותגיד'],['תגידי','תגיד'],['בואי','בוא'],['שימי','שים'],
   ['תשאלי','תשאל'],['תנסי','תנסה'],['ענית','ענית']
